@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Street Legends 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;background:#7bc8ed;font-family:Arial,sans-serif;touch-action:none}
+canvas{display:block;width:100vw;height:100vh}
+#hud{position:absolute;top:12px;left:12px;color:white;text-shadow:2px 2px 3px black;font-weight:bold;pointer-events:none}
+#speed{font-size:27px}
+#title{font-size:18px;color:#ffe65a}
+#controls{position:absolute;bottom:22px;width:100%;display:flex;justify-content:space-between;padding:0 18px;align-items:end}
+.group{display:flex;gap:10px}
+button{border:2px solid #ffffff99;background:#111b;color:white;border-radius:16px;font-size:18px;font-weight:bold;min-width:64px;height:64px;touch-action:none}
+button:active{background:#ff9c00}
+#nitro{background:#e65b0b}
+#hint{position:absolute;top:12px;right:12px;color:white;text-shadow:1px 2px 3px black;font-size:12px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+<div id="title">🏁 STREET LEGENDS</div>
+<div id="speed">0 KM/H</div>
+<div id="coins">🪙 Coins: 0</div>
+<div id="carname">🚗 Street Racer</div>
+</div>
+<div id="hint">DRIVE • DODGE • COLLECT</div>
+<div id="controls">
+ <div class="group">
+  <button id="left">◀</button>
+  <button id="right">▶</button>
+ </div>
+ <div class="group">
+  <button id="brake">BRAKE</button>
+  <button id="gas">GAS ▲</button>
+  <button id="nitro">⚡</button>
+ </div>
+</div>
+<script>
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+let W,H;
+function resize(){
+ W=canvas.width=innerWidth*devicePixelRatio;
+ H=canvas.height=innerHeight*devicePixelRatio;
+}
+addEventListener("resize",resize);
+resize();
+
+let speed=0,steer=0,playerX=0,distance=0,coins=0;
+let nitro=false,gameOver=false;
+let roadObjects=[];
+let carColor="#ff3030";
+
+for(let i=0;i<30;i++){
+ roadObjects.push({
+   z:i/30,
+   side:i%2===0?-1:1,
+   type:i%4===0?"coin":"tree"
+ });
+}
+
+const keys={left:false,right:false,gas:false,brake:false,nitro:false};
+
+function bind(id,key){
+ const el=document.getElementById(id);
+ const down=e=>{e.preventDefault();keys[key]=true};
+ const up=e=>{e.preventDefault();keys[key]=false};
+ el.addEventListener("pointerdown",down);
+ el.addEventListener("pointerup",up);
+ el.addEventListener("pointercancel",up);
+ el.addEventListener("pointerleave",up);
+}
+bind("left","left");
+bind("right","right");
+bind("gas","gas");
+bind("brake","brake");
+bind("nitro","nitro");
+
+addEventListener("keydown",e=>{
+ if(e.key==="ArrowLeft"||e.key==="a")keys.left=true;
+ if(e.key==="ArrowRight"||e.key==="d")keys.right=true;
+ if(e.key==="ArrowUp"||e.key==="w")keys.gas=true;
+ if(e.key==="ArrowDown"||e.key==="s")keys.brake=true;
+ if(e.key===" ")keys.nitro=true;
+});
+addEventListener("keyup",e=>{
+ if(e.key==="ArrowLeft"||e.key==="a")keys.left=false;
+ if(e.key==="ArrowRight"||e.key==="d")keys.right=false;
+ if(e.key==="ArrowUp"||e.key==="w")keys.gas=false;
+ if(e.key==="ArrowDown"||e.key==="s")keys.brake=false;
+ if(e.key===" ")keys.nitro=false;
+});
+
+function polygon(points,color){
+ ctx.fillStyle=color;
+ ctx.beginPath();
+ points.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));
+ ctx.closePath();
+ ctx.fill();
+}
+
+function drawCar(x,y,w,h,color){
+ // Shadow
+ ctx.fillStyle="#0005";
+ ctx.beginPath();
+ ctx.ellipse(x,y+h*.45,w*.75,h*.17,0,0,Math.PI*2);
+ ctx.fill();
+
+ // Body
+ polygon([
+ [x-w*.5,y+h*.2],
+ [x-w*.42,y-h*.22],
+ [x-w*.26,y-h*.5],
+ [x+w*.26,y-h*.5],
+ [x+w*.42,y-h*.22],
+ [x+w*.5,y+h*.2],
+ [x+w*.38,y+h*.42],
+ [x-w*.38,y+h*.42]
+ ],color);
+
+ // Windows
+ polygon([
+ [x-w*.31,y-h*.19],
+ [x-w*.2,y-h*.42],
+ [x+w*.2,y-h*.42],
+ [x+w*.31,y-h*.19]
+ ],"#a8e6ff");
+
+ ctx.fillStyle="#222";
+ ctx.fillRect(x-w*.48,y-h*.05,w*.12,h*.24);
+ ctx.fillRect(x+w*.36,y-h*.05,w*.12,h*.24);
+
+ ctx.fillStyle="#fff4a3";
+ ctx.fillRect(x-w*.35,y+h*.18,w*.15,h*.08);
+ ctx.fillRect(x+w*.2,y+h*.18,w*.15,h*.08);
+}
+
+function drawBuilding(x,y,w,h,color){
+ ctx.fillStyle=color;
+ ctx.fillRect(x-w/2,y-h,w,h);
+ ctx.fillStyle="#b8e5ff";
+ for(let yy=y-h+8;yy<y-8;yy+=19){
+  for(let xx=x-w/2+6;xx<x+w/2-5;xx+=15){
+   ctx.fillRect(xx,yy,7,9);
+  }
+ }
+}
+
+function draw(){
+ ctx.setTransform(1,0,0,1,0,0);
+ ctx.clearRect(0,0,W,H);
+
+ // Draw in logical pixels on high-density screens
+ ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+ let w=innerWidth,h=innerHeight;
+ const horizon=h*.38;
+ const center=w/2;
+
+ // Sky
+ let sky=ctx.createLinearGradient(0,0,0,horizon);
+ sky.addColorStop(0,"#47a7ed");
+ sky.addColorStop(1,"#d8f4ff");
+ ctx.fillStyle=sky;
+ ctx.fillRect(0,0,w,horizon);
+
+ // Sun
+ ctx.fillStyle="#fff4a5";
+ ctx.beginPath();
+ ctx.arc(w*.82,h*.12,27,0,Math.PI*2);
+ ctx.fill();
+
+ // Hills
+ polygon([[0,horizon],[w*.13,horizon-35],[w*.25,horizon+3],
+ [w*.42,horizon-45],[w*.59,horizon+5],[w*.78,horizon-38],
+ [w,horizon],[w,h],[0,h]],"#6cbd65");
+
+ // Ground
+ ctx.fillStyle="#39984b";
+ ctx.fillRect(0,horizon,w,h-horizon);
+
+ // Road perspective
+ let roadTop=w*.08;
+ let roadBottom=w*.92;
+ polygon([
+ [center-roadTop/2,horizon],
+ [center+roadTop/2,horizon],
+ [center+roadBottom/2,h],
+ [center-roadBottom/2,h]
+ ],"#454950");
+
+ // Road edges
+ ctx.strokeStyle="#fff";
+ ctx.lineWidth=3;
+ ctx.beginPath();
+ ctx.moveTo(center-roadTop/2,horizon);
+ ctx.lineTo(center-roadBottom/2,h);
+ ctx.moveTo(center+roadTop/2,horizon);
+ ctx.lineTo(center+roadBottom/2,h);
+ ctx.stroke();
+
+ // Lane markings
+ for(let i=0;i<12;i++){
+  let z=(i/12+distance*.012)%1;
+  let y=horizon+(h-horizon)*z*z;
+  let roadWidth=roadTop+(roadBottom-roadTop)*z;
+  let dashH=2+z*28;
+  ctx.fillStyle="#fff";
+  ctx.fillRect(center-roadWidth*.17,y,Math.max(2,z*5),dashH);
+  ctx.fillRect(center+roadWidth*.17,y,Math.max(2,z*5),dashH);
+ }
+
+ // City buildings
+ for(let i=0;i<12;i++){
+  let z=((i/12+distance*.002)%1);
+  let y=horizon+z*z*(h-horizon);
+  let size=8+z*38;
+  let bx=i%2===0?center-roadBottom/2-size:center+roadBottom/2+size;
+  drawBuilding(bx,y,size, size*(1.5+(i%3)),i%2===0?"#bd8e77":"#9dabb7");
+ }
+
+ // Roadside trees and coins
+ for(let i=0;i<roadObjects.length;i++){
+  let o=roadObjects[i];
+  let z=(o.z+distance*.009)%1;
+  let y=horizon+z*z*(h-horizon);
+  let roadWidth=roadTop+(roadBottom-roadTop)*z;
+  let x=center+o.side*(roadWidth*.57+z*w*.15);
+  let size=5+z*26;
+
+  if(o.type==="coin"){
+   ctx.fillStyle="#ffdc25";
+   ctx.beginPath();
+   ctx.arc(x,y-size,size*.35,0,Math.PI*2);
+   ctx.fill();
+   ctx.strokeStyle="#fff5a0";
+   ctx.lineWidth=2;
+   ctx.stroke();
+  }else{
+   ctx.fillStyle="#6c4226";
+   ctx.fillRect(x-size*.12,y-size*.1,size*.24,size*.8);
+   ctx.fillStyle="#146b32";
+   ctx.beginPath();
+   ctx.arc(x,y-size*.4,size*.58,0,Math.PI*2);
+   ctx.fill();
+  }
+ }
+
+ // Player car
+ let carY=h*.82;
+ let carX=center+playerX*w*.32;
+ drawCar(carX,carY,Math.max(43,w*.105),Math.max(75,h*.17),carColor);
+
+ // Nitro flames
+ if(keys.nitro&&speed>1){
+  polygon([
+   [carX-w*.025,carY+h*.075],
+   [carX,carY+h*.15+Math.random()*10],
+   [carX+w*.025,carY+h*.075]
+  ],"#ffb51b");
+ }
+
+ document.getElementById("speed").textContent=
+ Math.round(speed*4)+" KM/H";
+ document.getElementById("coins").textContent="🪙 Coins: "+coins;
+}
+
+function update(){
+ if(keys.gas)speed=Math.min(speed+(keys.nitro?.22:.09),keys.nitro?45:30);
+ else speed=Math.max(0,speed-.035);
+
+ if(keys.brake)speed=Math.max(0,speed-.22);
+
+ let turn=keys.left?-1:keys.right?1:0;
+ playerX+=turn*.035*(.4+speed/25);
+ playerX=Math.max(-1.15,Math.min(1.15,playerX));
+
+ distance+=speed*.006;
+
+ // Collect coins occasionally
+ if(speed>0&&Math.random()<.012){
+  coins++;
+ }
+
+ // Swap car colors with number keys
+ if(keys.nitro)nitro=true;
+ else nitro=false;
+
+ draw();
+ requestAnimationFrame(update);
+}
+update();
+</script>
+</body>
+  </html>
+  
